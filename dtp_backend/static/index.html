@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ДТП / АНАЛИТИКА - Дорожная безопасность РФ</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e27;
+            color: #fff;
+            overflow-x: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1f3a 0%, #0a0e27 100%);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #ff6b35;
+            box-shadow: 0 4px 20px rgba(255, 107, 53, 0.3);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: #ff6b35;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 20px;
+        }
+
+        .logo-text h1 {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+
+        .logo-text p {
+            font-size: 11px;
+            color: #8892b0;
+            letter-spacing: 2px;
+        }
+
+        .stats-header {
+            display: flex;
+            gap: 40px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            display: block;
+        }
+
+        .stat-value.dtp { color: #ff6b35; }
+        .stat-value.dead { color: #ff4757; }
+        .stat-value.injured { color: #ffa502; }
+
+        .stat-label {
+            font-size: 11px;
+            color: #8892b0;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 80px);
+        }
+
+        .sidebar {
+            width: 350px;
+            background: #111827;
+            padding: 20px;
+            overflow-y: auto;
+            border-right: 1px solid #1f2937;
+        }
+
+        .filter-section {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #1f2937;
+        }
+
+        .filter-title {
+            font-size: 11px;
+            color: #8892b0;
+            letter-spacing: 1.5px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .filter-btn {
+            flex: 1;
+            padding: 10px 15px;
+            background: #1f2937;
+            border: 1px solid #374151;
+            color: #fff;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 13px;
+        }
+
+        .filter-btn:hover {
+            background: #374151;
+        }
+
+        .filter-btn.active {
+            background: #ff6b35;
+            border-color: #ff6b35;
+            color: #fff;
+        }
+
+        .filter-select {
+            width: 100%;
+            padding: 10px;
+            background: #1f2937;
+            border: 1px solid #374151;
+            color: #fff;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .filter-select option {
+            background: #1f2937;
+            color: #fff;
+        }
+
+        .map-mode-btn {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #1f2937;
+            border: 2px solid #374151;
+            color: #fff;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.3s;
+        }
+
+        .map-mode-btn:hover {
+            background: #374151;
+        }
+
+        .map-mode-btn.active {
+            background: rgba(255, 107, 53, 0.2);
+            border-color: #ff6b35;
+        }
+
+        .map-mode-btn .icon {
+            width: 20px;
+            height: 20px;
+            background: #ff6b35;
+            border-radius: 4px;
+        }
+
+        .apply-btn {
+            width: 100%;
+            padding: 15px;
+            background: #ff6b35;
+            border: none;
+            color: #fff;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.3s;
+            margin-top: 20px;
+        }
+
+        .apply-btn:hover {
+            background: #ff8555;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(255, 107, 53, 0.4);
+        }
+
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        .period-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: #1f2937;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .period-label {
+            font-size: 11px;
+            color: #8892b0;
+            letter-spacing: 1px;
+        }
+
+        .period-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .map-wrapper {
+            flex: 1;
+            background: #111827;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            border: 1px solid #1f2937;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            background: #0a0e27;
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(17, 24, 39, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #374151;
+            z-index: 1000;
+        }
+
+        .legend-title {
+            font-size: 10px;
+            color: #8892b0;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+
+        .charts-section {
+            height: 250px;
+            margin-top: 20px;
+            background: #111827;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #1f2937;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 180px;
+        }
+
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(10, 14, 39, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .loading.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #1f2937;
+            border-top-color: #ff6b35;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .leaflet-popup-content-wrapper {
+            background: #1f2937;
+            color: #fff;
+            border-radius: 8px;
+        }
+
+        .leaflet-popup-tip {
+            background: #1f2937;
+        }
+
+        .leaflet-popup-content {
+            margin: 12px;
+            font-size: 13px;
+        }
+
+        .region-select {
+            width: 100%;
+            padding: 10px;
+            background: #1f2937;
+            border: 1px solid #374151;
+            color: #fff;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="header">
+        <div class="logo">
+            <div class="logo-icon"></div>
+            <div class="logo-text">
+                <h1>ДТП / АНАЛИТИКА</h1>
+                <p>ДОРОЖНАЯ БЕЗОПАСНОСТЬ РФ</p>
+            </div>
+        </div>
+
+        <div class="stats-header">
+            <div class="stat-item">
+                <span class="stat-value dtp" id="dtpCount">6 929</span>
+                <span class="stat-label">ДТП</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value dead" id="deadCount">1 187</span>
+                <span class="stat-label">ПОГИБЛО</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value injured" id="injuredCount">8 912</span>
+                <span class="stat-label">РАНЕНО</span>
+            </div>
+        </div>
+
+        <div style="color: #8892b0; font-size: 11px;">
+            📡 ДАННЫЕ ГИБДД РФ
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="filter-section">
+                <div class="filter-title">Показатель</div>
+                <div class="filter-buttons">
+                    <button class="filter-btn active" data-type="dtp">ДТП</button>
+                    <button class="filter-btn" data-type="dead">Погибшие</button>
+                    <button class="filter-btn" data-type="injured">Раненые</button>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-title">Период</div>
+                <select class="filter-select" id="monthFilter">
+                    <option value="1">Январь</option>
+                    <option value="2">Февраль</option>
+                    <option value="3">Март</option>
+                    <option value="4" selected>Апрель</option>
+                    <option value="5">Май</option>
+                    <option value="6">Июнь</option>
+                    <option value="7">Июль</option>
+                    <option value="8">Август</option>
+                    <option value="9">Сентябрь</option>
+                    <option value="10">Октябрь</option>
+                    <option value="11">Ноябрь</option>
+                    <option value="12">Декабрь</option>
+                </select>
+                <select class="filter-select" id="yearFilter">
+                    <option value="2024">2024</option>
+                    <option value="2025">2025</option>
+                    <option value="2026" selected>2026</option>
+                </select>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-title">Категория ДТП</div>
+                <select class="filter-select" id="categoryFilter">
+                    <option value="all">Все происшествия</option>
+                    <option value="children">С участием детей</option>
+                    <option value="pedestrians">С пешеходами</option>
+                    <option value="drivers">Нарушения водителей</option>
+                </select>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-title">Режим карты</div>
+                <button class="map-mode-btn active" data-mode="choropleth">
+                    <div class="icon"></div>
+                    <span>Картограмма</span>
+                </button>
+                <button class="map-mode-btn" data-mode="points">
+                    <div class="icon" style="border-radius: 50%;"></div>
+                    <span>Точечная карта</span>
+                </button>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-title">Регион</div>
+                <select class="region-select" id="regionFilter">
+                    <option value="all">Вся Россия</option>
+                    <option value="77">Москва</option>
+                    <option value="78">Санкт-Петербург</option>
+                    <option value="54">Новосибирская область</option>
+                    <option value="66">Свердловская область</option>
+                    <option value="23">Краснодарский край</option>
+                </select>
+            </div>
+
+            <button class="apply-btn" id="applyBtn">Применить фильтры</button>
+
+            <button class="filter-btn" onclick="exportData()" style="width: 100%; margin-top: 10px; background: #2ed573; border-color: #2ed573;">
+                💾 Слить Базу (JSON)
+            </button>
+        </div>
+
+        <div class="content">
+            <div class="period-badge">
+                <span class="period-label">ПЕРИОД</span>
+                <span class="period-value" id="periodText">АПР 2026</span>
+            </div>
+
+            <div class="map-wrapper">
+                <div id="map"></div>
+
+                <div class="legend">
+                    <div class="legend-title">Интенсивность</div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ff0000;"></div>
+                        <span>Критический</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ff6b35;"></div>
+                        <span>Высокий</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ffa502;"></div>
+                        <span>Средний</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #7bed9f;"></div>
+                        <span>Низкий</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #2ed573;"></div>
+                        <span>Минимальный</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-section">
+                <div class="chart-container">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+from app.api import map_router, regions_router, stats_router
