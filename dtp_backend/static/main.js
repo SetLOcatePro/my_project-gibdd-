@@ -4,8 +4,25 @@ let currentMode = 'choropleth';
 let currentType = 'dtp';
 let geojsonData = null;
 let windowRegionData = {};
+let geojsonLayer = null;
+let selectedRegionCode = null;
+let pointMarkers = []; // Храним точки, чтобы очищать при смене режима
 
 const API_BASE = 'http://localhost:8000/api';
+
+// Расширенная карта соответствия кодов и возможных названий в GeoJSON
+const regionNameMap = {
+    '77': ['Москва', 'г. Москва', 'Московская область', 'Moscow'],
+    '78': ['Санкт-Петербург', 'г. Санкт-Петербург', 'Санкт-Петербург г.', 'Saint Petersburg'],
+    '54': ['Новосибирская область', 'Новосибирская обл.'],
+    '66': ['Свердловская область', 'Свердловская обл.'],
+    '23': ['Краснодарский край'],
+    '16': ['Татарстан', 'Республика Татарстан'],
+    '52': ['Нижегородская область', 'Нижегородская обл.'],
+    '74': ['Челябинская область', 'Челябинская обл.'],
+    '61': ['Ростовская область', 'Ростовская обл.'],
+    '34': ['Волгоградская область', 'Волгоградская обл.']
+};
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -15,28 +32,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (error) {
         console.error('Ошибка инициализации:', error);
         hideLoading();
-        showError('Ошибка загрузки: ' + error.message);
     }
 });
 
 async function initMap() {
     map = L.map('map', {
-        center: [64.0, 100.0],
-        zoom: 3,
-        minZoom: 2,
-        maxZoom: 10,
-        zoomControl: false,
-        attributionControl: false
+        center: [64.0, 100.0], zoom: 3, minZoom: 2, maxZoom: 10,
+        zoomControl: false, attributionControl: false
     });
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-    }).addTo(map);
-
-    L.control.zoom({
-        position: 'bottomright'
-    }).addTo(map);
-
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
     loadTestData();
     loadGeoJSON();
 }
@@ -47,22 +52,26 @@ async function loadGeoJSON() {
             'https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/russia.geojson',
             'https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/countries/Russia.geojson'
         ];
-
         for (const url of urls) {
             try {
-                const response = await fetch(url, { timeout: 5000 });
-                geojsonData = await response.json();
+                const res = await fetch(url);
+                geojsonData = await res.json();
                 renderMap();
                 return;
-            } catch (e) {
-                continue;
-            }
+            } catch (e) { continue; }
         }
+    } catch (err) { console.error('GeoJSON ошибка:', err); }
+}
 
-        console.log('GeoJSON не загрузился ни с одного источника');
-    } catch (error) {
-        console.error('Ошибка загрузки GeoJSON:', error);
+function findRegionCode(featureName) {
+    if (!featureName) return null;
+    const cleanName = featureName.replace(/\s+/g, ' ').trim();
+    for (const [code, names] of Object.entries(regionNameMap)) {
+        if (names.some(n => cleanName.includes(n) || n.includes(cleanName))) {
+            return code;
+        }
     }
+    return null;
 }
 
 async function loadData() {
@@ -71,112 +80,129 @@ async function loadData() {
     const region = document.getElementById('regionFilter').value;
     const category = document.getElementById('categoryFilter').value;
 
+    selectedRegionCode = region === 'all' ? null : region;
+
     try {
-        const response = await fetch(`${API_BASE}/map/getMainMapData?month=${month}&year=${year}&region=${region}&category=${category}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({})
+        const res = await fetch(`${API_BASE}/map/getMainMapData?month=${month}&year=${year}&region=${region}&category=${category}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
         });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
         updateStats(data.stats);
         updateChart(data);
-
         if (data.regions) {
             windowRegionData = data.regions;
-            if (geojsonData) {
-                updateMapData(data.regions);
-            }
+            if (currentMode === 'points') renderPoints();
+            else applyRegionStyles();
         }
-    } catch (error) {
-        console.error('Ошибка загрузки данных:', error);
+    } catch (err) {
+        console.error('Ошибка данных:', err);
         loadTestData();
     }
 }
 
 function loadTestData() {
     const testData = {
-        stats: {
-            dtp: 6929,
-            dead: 1187,
-            injured: 8912
-        },
-        regions: generateRandomRegionData(),
-        chart: {
-            labels: ['ДТП', 'Погибло', 'Ранено'],
-            data: [8500, 795, 10200]
-        }
+        stats: { dtp: 6929, dead: 1187, injured: 8912 },
+        regions: {},
+        chart: { labels: ['ДТП', 'Погибло', 'Ранено'], data: [8500, 795, 10200] }
     };
-
-    updateStats(testData.stats);
-    updateChart(testData);
-    windowRegionData = testData.regions;
-
-    if (geojsonData) {
-        updateMapData(testData.regions);
-    }
-
-    hideLoading();
-}
-
-function generateRandomRegionData() {
-    const regions = {};
-    const regionCodes = ['77', '78', '54', '66', '23', '16', '52', '74', '61', '34'];
-
-    regionCodes.forEach(code => {
-        regions[code] = {
+    Object.keys(regionNameMap).forEach(code => {
+        testData.regions[code] = {
             dtp: Math.floor(Math.random() * 500) + 50,
             dead: Math.floor(Math.random() * 50) + 5,
             injured: Math.floor(Math.random() * 400) + 40
         };
     });
-
-    return regions;
+    updateStats(testData.stats);
+    updateChart(testData);
+    windowRegionData = testData.regions;
+    if (currentMode === 'points') renderPoints();
+    else applyRegionStyles();
+    hideLoading();
 }
 
 function renderMap() {
     if (!geojsonData) return;
+    clearPoints(); // Очищаем точки при перерисовке
+    if (geojsonLayer) map.removeLayer(geojsonLayer);
 
-    map.eachLayer((layer) => {
-        if (layer instanceof L.GeoJSON) {
-            map.removeLayer(layer);
-        }
-    });
-
-    const geojsonLayer = L.geoJSON(geojsonData, {
+    geojsonLayer = L.geoJSON(geojsonData, {
         style: getRegionStyle,
         onEachFeature: onEachFeature
     }).addTo(map);
 
     map.fitBounds(geojsonLayer.getBounds());
+
+    if (currentMode === 'points') {
+        renderPoints();
+    } else {
+        applyRegionStyles();
+    }
 }
 
 function getRegionStyle(feature) {
-    const regionCode = feature.properties.id || feature.properties.iso_3166_2 || feature.properties.code;
+    const regionName = feature.properties.name || '';
+    const regionCode = findRegionCode(regionName);
     const data = windowRegionData[regionCode] || { dtp: 0, dead: 0, injured: 0 };
-
-    let value = 0;
-    if (currentType === 'dtp') value = data.dtp;
-    else if (currentType === 'dead') value = data.dead;
-    else if (currentType === 'injured') value = data.injured;
-
-    const color = getColorByValue(value);
+    let value = currentType === 'dtp' ? data.dtp : currentType === 'dead' ? data.dead : data.injured;
+    const isSelected = selectedRegionCode === regionCode;
 
     return {
-        fillColor: color,
-        weight: currentMode === 'choropleth' ? 1 : 0,
-        opacity: 1,
-        color: currentMode === 'choropleth' ? '#fff' : 'transparent',
-        dashArray: currentMode === 'choropleth' ? '3' : '',
-        fillOpacity: currentMode === 'choropleth' ? 0.7 : 0
+        fillColor: isSelected ? '#6B7280' : getColorByValue(value),
+        weight: 2, opacity: 1, color: '#ffffff', dashArray: '',
+        fillOpacity: isSelected ? 0.9 : 0.65
     };
+}
+
+function applyRegionStyles() {
+    if (!geojsonLayer) return;
+    geojsonLayer.eachLayer(layer => {
+        const name = layer.feature.properties.name || '';
+        const code = findRegionCode(name);
+        const data = windowRegionData[code] || { dtp: 0, dead: 0, injured: 0 };
+        let value = currentType === 'dtp' ? data.dtp : currentType === 'dead' ? data.dead : data.injured;
+        const isSelected = selectedRegionCode === code;
+
+        layer.setStyle({
+            fillColor: isSelected ? '#6B7280' : getColorByValue(value),
+            fillOpacity: isSelected ? 0.9 : 0.65,
+            weight: 2, color: '#ffffff'
+        });
+    });
+}
+
+function renderPoints() {
+    clearPoints();
+    if (!geojsonLayer) return;
+
+    geojsonLayer.eachLayer(layer => {
+        const feature = layer.feature;
+        const name = feature.properties.name || '';
+        const code = findRegionCode(name);
+        const data = windowRegionData[code] || { dtp: 0, dead: 0, injured: 0 };
+
+        if (code && data.dtp > 0) {
+            try {
+                const center = layer.getBounds().getCenter();
+                const radius = Math.max(6, Math.min(30, data.dtp / 8));
+                const color = getColorByValue(data.dtp);
+
+                const marker = L.circleMarker(center, {
+                    radius: radius, fillColor: color, color: '#fff',
+                    weight: 1, opacity: 1, fillOpacity: 0.85
+                }).addTo(map);
+
+                marker.bindPopup(`<b>${name}</b><br>ДТП: ${data.dtp}<br>Погибло: ${data.dead}<br>Ранено: ${data.injured}`);
+                pointMarkers.push(marker);
+            } catch (e) { /* Пропускаем регионы без корректных границ */ }
+        }
+    });
+}
+
+function clearPoints() {
+    pointMarkers.forEach(m => map.removeLayer(m));
+    pointMarkers = [];
 }
 
 function getColorByValue(value) {
@@ -188,78 +214,50 @@ function getColorByValue(value) {
 }
 
 function onEachFeature(feature, layer) {
-    const regionCode = feature.properties.id || feature.properties.iso_3166_2 || feature.properties.code || 'unknown';
-    const regionName = feature.properties.name || feature.properties.admin || 'Регион';
+    const regionName = feature.properties.name || 'Регион';
+    const regionCode = findRegionCode(regionName);
     const data = windowRegionData[regionCode] || { dtp: 0, dead: 0, injured: 0 };
 
-    const popupContent = `
+    layer.bindPopup(`
         <div style="min-width: 150px; color: #000;">
-            <h3 style="margin: 0 0 10px 0; font-size: 14px; border-bottom: 2px solid #ff6b35; padding-bottom: 5px;">
-                ${regionName}
-            </h3>
+            <h3 style="margin: 0 0 10px 0; font-size: 14px; border-bottom: 2px solid #ff6b35; padding-bottom: 5px;">${regionName}</h3>
             <div style="font-size: 12px;">
-                <div style="margin: 5px 0;">🚗 <strong>ДТП:</strong> ${data.dtp}</div>
-                <div style="margin: 5px 0;">💀 <strong>Погибло:</strong> ${data.dead}</div>
-                <div style="margin: 5px 0;">🏥 <strong>Ранено:</strong> ${data.injured}</div>
+                <div>🚗 <strong>ДТП:</strong> ${data.dtp}</div>
+                <div>💀 <strong>Погибло:</strong> ${data.dead}</div>
+                <div> <strong>Ранено:</strong> ${data.injured}</div>
             </div>
         </div>
-    `;
-
-    layer.bindPopup(popupContent);
+    `);
 
     layer.on({
-        mouseover: function(e) {
-            const layer = e.target;
-            if (currentMode === 'choropleth') {
-                layer.setStyle({
-                    weight: 3,
-                    color: '#ff6b35',
-                    fillOpacity: 0.9
-                });
-            } else {
-                addPointMarker(layer.getBounds().getCenter(), data);
+        click: () => {
+            if (regionCode) {
+                document.getElementById('regionFilter').value = regionCode;
+                selectedRegionCode = regionCode;
+                loadData();
             }
-            layer.bringToFront();
         },
-        mouseout: function(e) {
-            const layer = e.target;
+        mouseover: (e) => {
             if (currentMode === 'choropleth') {
-                geojsonLayer.resetStyle(layer);
+                e.target.setStyle({ weight: 3, color: '#ff6b35', fillOpacity: 0.95 });
+                e.target.bringToFront();
+            }
+        },
+        mouseout: (e) => {
+            if (currentMode === 'choropleth') {
+                geojsonLayer.resetStyle(e.target);
+                const name = e.target.feature.properties.name || '';
+                const code = findRegionCode(name);
+                if (selectedRegionCode === code) {
+                    e.target.setStyle({ fillColor: '#6B7280', fillOpacity: 0.9, weight: 2, color: '#ffffff' });
+                }
             }
         }
     });
 }
 
-function addPointMarker(center, data) {
-    const intensity = data.dtp;
-    let radius = 5;
-    let color = '#2ed573';
-
-    if (intensity > 300) { radius = 20; color = '#ff0000'; }
-    else if (intensity > 200) { radius = 15; color = '#ff6b35'; }
-    else if (intensity > 100) { radius = 10; color = '#ffa502'; }
-    else if (intensity > 50) { radius = 7; color = '#7bed9f'; }
-
-    L.circleMarker(center, {
-        radius: radius,
-        fillColor: color,
-        color: '#fff',
-        weight: 1,
-        opacity: 1,
-        fillOpacity: 0.8
-    }).addTo(map);
-}
-
-function updateMapData(regionsData) {
-    windowRegionData = regionsData;
-    if (geojsonData) {
-        renderMap();
-    }
-}
-
 function updateStats(stats) {
     if (!stats) return;
-
     animateValue('dtpCount', stats.dtp || 0);
     animateValue('deadCount', stats.dead || 0);
     animateValue('injuredCount', stats.injured || 0);
@@ -268,96 +266,37 @@ function updateStats(stats) {
 function animateValue(id, end) {
     const obj = document.getElementById(id);
     if (!obj) return;
-
-    const start = 0;
-    const duration = 1000;
-    const startTime = performance.now();
-
+    const start = 0, duration = 1000, startTime = performance.now();
     function update(currentTime) {
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-
-        const value = Math.floor(start + (end - start) * progress);
-        obj.innerHTML = value.toLocaleString('ru-RU');
-
-        if (progress < 1) {
-            requestAnimationFrame(update);
-        }
+        const progress = Math.min((currentTime - startTime) / duration, 1);
+        obj.innerHTML = Math.floor(start + (end - start) * progress).toLocaleString('ru-RU');
+        if (progress < 1) requestAnimationFrame(update);
     }
-
     requestAnimationFrame(update);
 }
 
 function updateChart(data) {
     const ctx = document.getElementById('mainChart');
     if (!ctx) return;
-
-    const context = ctx.getContext('2d');
-
-    if (mainChart) {
-        mainChart.destroy();
-    }
-
-    const chartData = data.chart || {
-        labels: ['ДТП', 'Погибло', 'Ранено'],
-        data: [0, 0, 0]
-    };
-
-    mainChart = new Chart(context, {
+    if (mainChart) mainChart.destroy();
+    const chartData = data.chart || { labels: ['ДТП', 'Погибло', 'Ранено'], data: [0, 0, 0] };
+    mainChart = new Chart(ctx.getContext('2d'), {
         type: 'bar',
         data: {
-            labels: chartData.labels || ['ДТП', 'Погибло', 'Ранено'],
+            labels: chartData.labels,
             datasets: [{
-                label: 'Статистика',
-                data: chartData.data || [0, 0, 0],
-                backgroundColor: [
-                    'rgba(0, 184, 148, 0.8)',
-                    'rgba(71, 85, 105, 0.8)',
-                    'rgba(255, 165, 2, 0.8)'
-                ],
-                borderColor: [
-                    'rgba(0, 184, 148, 1)',
-                    'rgba(71, 85, 105, 1)',
-                    'rgba(255, 165, 2, 1)'
-                ],
-                borderWidth: 2,
-                borderRadius: 8
+                data: chartData.data,
+                backgroundColor: ['rgba(0, 184, 148, 0.8)', 'rgba(71, 85, 105, 0.8)', 'rgba(255, 165, 2, 0.8)'],
+                borderColor: ['rgba(0, 184, 148, 1)', 'rgba(71, 85, 105, 1)', 'rgba(255, 165, 2, 1)'],
+                borderWidth: 2, borderRadius: 8
             }]
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    backgroundColor: 'rgba(17, 24, 39, 0.9)',
-                    titleColor: '#fff',
-                    bodyColor: '#fff',
-                    borderColor: '#ff6b35',
-                    borderWidth: 1,
-                    padding: 12
-                }
-            },
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
             scales: {
-                y: {
-                    beginAtZero: true,
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.1)'
-                    },
-                    ticks: {
-                        color: '#8892b0'
-                    }
-                },
-                x: {
-                    grid: {
-                        display: false
-                    },
-                    ticks: {
-                        color: '#8892b0'
-                    }
-                }
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#8892b0' } },
+                x: { grid: { display: false }, ticks: { color: '#8892b0' } }
             }
         }
     });
@@ -369,9 +308,8 @@ function setupEventListeners() {
             document.querySelectorAll('.filter-btn[data-type]').forEach(b => b.classList.remove('active'));
             e.target.classList.add('active');
             currentType = e.target.dataset.type;
-            if (geojsonData) {
-                renderMap();
-            }
+            if (currentMode === 'points') renderPoints();
+            else applyRegionStyles();
         });
     });
 
@@ -380,66 +318,49 @@ function setupEventListeners() {
             document.querySelectorAll('.map-mode-btn[data-mode]').forEach(b => b.classList.remove('active'));
             e.target.closest('.map-mode-btn').classList.add('active');
             currentMode = e.target.closest('.map-mode-btn').dataset.mode;
-            if (geojsonData) {
-                renderMap();
-            }
+            renderMap(); // Перерисовка карты с учётом режима
         });
     });
 
     const applyBtn = document.getElementById('applyBtn');
-    if (applyBtn) {
-        applyBtn.addEventListener('click', () => {
-            updatePeriodText();
+    if (applyBtn) applyBtn.addEventListener('click', () => { updatePeriodText(); loadData(); });
+
+    const regionFilter = document.getElementById('regionFilter');
+    if (regionFilter) {
+        regionFilter.addEventListener('change', (e) => {
+            selectedRegionCode = e.target.value === 'all' ? null : e.target.value;
+            if (currentMode === 'points') renderPoints();
+            else applyRegionStyles();
             loadData();
         });
     }
 
-    const monthFilter = document.getElementById('monthFilter');
-    const yearFilter = document.getElementById('yearFilter');
-    const categoryFilter = document.getElementById('categoryFilter');
-
-    if (monthFilter) monthFilter.addEventListener('change', updatePeriodText);
-    if (yearFilter) yearFilter.addEventListener('change', updatePeriodText);
-    if (categoryFilter) categoryFilter.addEventListener('change', loadData);
+    ['monthFilter', 'yearFilter', 'categoryFilter'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', () => { if(id !== 'categoryFilter') updatePeriodText(); loadData(); });
+    });
 }
 
 function updatePeriodText() {
     const months = ['ЯНВ', 'ФЕВ', 'МАР', 'АПР', 'МАЙ', 'ИЮН', 'ИЮЛ', 'АВГ', 'СЕН', 'ОКТ', 'НОЯ', 'ДЕК'];
-    const monthSelect = document.getElementById('monthFilter');
-    const yearSelect = document.getElementById('yearFilter');
-    const periodText = document.getElementById('periodText');
-
-    if (!monthSelect || !yearSelect || !periodText) return;
-
-    const month = parseInt(monthSelect.value) - 1;
-    const year = yearSelect.value;
-
-    periodText.innerText = `${months[month]} ${year}`;
+    const m = document.getElementById('monthFilter');
+    const y = document.getElementById('yearFilter');
+    const t = document.getElementById('periodText');
+    if (m && y && t) t.innerText = `${months[parseInt(m.value)-1]} ${y.value}`;
 }
 
 function hideLoading() {
-    const loading = document.getElementById('loading');
-    if (loading) {
-        loading.classList.add('hidden');
-    }
-}
-
-function showError(message) {
-    alert('Ошибка: ' + message);
-    hideLoading();
+    const l = document.getElementById('loading');
+    if (l) l.classList.add('hidden');
 }
 
 async function exportData() {
     try {
-        const response = await fetch(`${API_BASE}/export/all`);
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
+        const res = await fetch(`${API_BASE}/map/export/all`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
-        a.download = `dtp_export_${new Date().toISOString().split('T')[0]}.json`;
+        a.href = url; a.download = `dtp_export_${new Date().toISOString().split('T')[0]}.json`;
         a.click();
-    } catch (error) {
-        console.error('Ошибка экспорта:', error);
-        alert('Ошибка экспорта данных');
-    }
+    } catch (err) { console.error('Экспорт ошибка:', err); }
 }
